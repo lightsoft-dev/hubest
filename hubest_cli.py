@@ -415,6 +415,152 @@ from rich.panel import Panel
 from rich.console import Group
 
 
+class ProjectsSidebar(Static):
+    """Left sidebar showing all registered projects with status indicators.
+    Supports selecting Hub (broadcast) or a single project as message target."""
+
+    COMPONENT_CLASSES = {"sidebar--selected"}
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.projects = load_projects()
+        self.selected = "hub"  # "hub" or project name
+        self._project_names = []  # ordered list for navigation
+
+    def on_mount(self):
+        self.set_interval(2, self.refresh_display)
+        self.refresh_display()
+
+    def select(self, name):
+        """Select Hub or a project by name."""
+        self.selected = name
+        self.refresh_display()
+
+    def select_next(self):
+        """Move selection down."""
+        all_items = ["hub"] + self._project_names
+        try:
+            idx = all_items.index(self.selected)
+        except ValueError:
+            idx = 0
+        self.selected = all_items[min(idx + 1, len(all_items) - 1)]
+        self.refresh_display()
+
+    def select_prev(self):
+        """Move selection up."""
+        all_items = ["hub"] + self._project_names
+        try:
+            idx = all_items.index(self.selected)
+        except ValueError:
+            idx = 0
+        self.selected = all_items[max(idx - 1, 0)]
+        self.refresh_display()
+
+    def refresh_display(self):
+        self.projects = load_projects()
+        states = scan_state_dir()
+
+        # Map sessions to projects by cwd
+        project_status = {}
+        for sid, state in states.items():
+            pname = project_name_from_cwd(state.get('cwd', ''), self.projects)
+            if pname and pname != 'unknown':
+                existing = project_status.get(pname)
+                priority = {'waiting': 0, 'working': 1, 'idle': 2}
+                if existing is None or priority.get(state.get('status', ''), 3) < priority.get(existing, 3):
+                    project_status[pname] = state.get('status', 'idle')
+
+        self._project_names = [p.get('name', '?') for p in self.projects]
+
+        # Validate selection still exists
+        if self.selected != "hub" and self.selected not in self._project_names:
+            self.selected = "hub"
+
+        lines = []
+
+        # Hub entry at top
+        active_count = sum(1 for s in project_status.values() if s in ('working', 'idle', 'waiting'))
+        if self.selected == "hub":
+            lines.append(Text.assemble(
+                (" ▸ ", "bold bright_cyan"),
+                ("Hub", "bold bright_cyan"),
+                (f"  ({active_count})", "dim"),
+            ))
+        else:
+            lines.append(Text.assemble(
+                ("   ", ""),
+                ("Hub", "bold"),
+                (f"  ({active_count})", "dim"),
+            ))
+
+        # Separator
+        lines.append(Text("  ──────────────────", style="dim"))
+
+        if not self.projects:
+            lines.append(Text("  (no projects)", style="dim"))
+        else:
+            for p in self.projects:
+                name = p.get('name', '?')
+                status = project_status.get(name, 'offline')
+
+                if status == 'working':
+                    icon = '●'
+                    icon_style = "bold dodger_blue1"
+                elif status == 'waiting':
+                    icon = '●'
+                    icon_style = "bold yellow"
+                elif status == 'idle':
+                    icon = '○'
+                    icon_style = "dim white"
+                else:
+                    icon = '·'
+                    icon_style = "dim red"
+
+                display_name = name[:14]
+                is_selected = (self.selected == name)
+
+                status_label = {
+                    'working': ' working',
+                    'waiting': ' waiting',
+                    'idle': ' idle',
+                }.get(status, '')
+                status_label_style = {
+                    'working': 'dodger_blue1',
+                    'waiting': 'yellow',
+                    'idle': 'dim',
+                }.get(status, 'dim red')
+
+                if is_selected:
+                    lines.append(Text.assemble(
+                        (" ▸ ", "bold bright_cyan"),
+                        (f"{icon} ", icon_style),
+                        (display_name, "bold bright_cyan"),
+                        (status_label, status_label_style),
+                    ))
+                elif status in ('working', 'waiting'):
+                    lines.append(Text.assemble(
+                        ("   ", ""),
+                        (f"{icon} ", icon_style),
+                        (display_name, "bold"),
+                        (status_label, status_label_style),
+                    ))
+                else:
+                    lines.append(Text.assemble(
+                        ("   ", ""),
+                        (f"{icon} ", icon_style),
+                        (display_name, icon_style),
+                        (status_label, status_label_style),
+                    ))
+
+        content = Group(*lines)
+        self.update(Panel(
+            content,
+            title="[bold]Projects[/]",
+            border_style="bright_cyan",
+            padding=(0, 1),
+        ))
+
+
 class SessionsPanel(Static):
     """Widget that displays session status in real-time."""
 
@@ -438,22 +584,18 @@ class SessionsPanel(Static):
         order = {'waiting': 0, 'working': 1, 'idle': 2}
         result.sort(key=lambda s: order.get(s.get('status', ''), 3))
 
-        total_registered = len(self.projects)
         total_active = len(result)
         waiting_count = sum(1 for s in result if s.get('status') == 'waiting')
 
         table = Table(
-            show_header=True,
-            header_style="bold dim",
+            show_header=False,
             box=None,
             padding=(0, 1),
             expand=True,
         )
         table.add_column("", width=2, no_wrap=True)
-        table.add_column("Project", style="bold", ratio=2, no_wrap=True)
-        table.add_column("Status", width=10, no_wrap=True)
-        table.add_column("Message", ratio=3)
-        table.add_column("Time", width=10, no_wrap=True, style="dim")
+        table.add_column("Project", style="bold", width=16, no_wrap=True)
+        table.add_column("Message", ratio=1)
 
         if result:
             for s in result:
@@ -481,37 +623,18 @@ class SessionsPanel(Static):
                 else:
                     icon_style = "dim white"
 
-                status_style = {
-                    'working': 'dodger_blue1',
-                    'waiting': 'bold yellow',
-                    'idle': 'dim',
-                }.get(status, 'red')
-
                 pname = s['_project_name']
                 msg = s.get('message', '')
-                if len(msg) > 45:
-                    msg = msg[:42] + '...'
-                ago = time_ago(ts)
+                if len(msg) > 60:
+                    msg = msg[:57] + '...'
 
                 table.add_row(
                     Text(icon, style=icon_style),
                     Text(pname),
-                    Text(status, style=status_style),
                     Text(msg, style="italic" if status == 'waiting' else ""),
-                    Text(ago),
-                )
-        else:
-            # Show registered projects as offline
-            for p in self.projects:
-                table.add_row(
-                    Text('✕', style='dim red'),
-                    Text(p['name']),
-                    Text('offline', style='dim red'),
-                    Text(''),
-                    Text(''),
                 )
 
-        title = f"Sessions — {total_registered} registered, {total_active} active"
+        title = f"Sessions — {total_active} active"
         if waiting_count > 0:
             title += f" [bold yellow]({waiting_count} waiting)[/]"
 
@@ -582,11 +705,21 @@ class HubestApp(App):
     Footer {
         background: $primary-background;
     }
+
+    #sidebar {
+        dock: left;
+        width: 24;
+        height: 100%;
+        margin: 0 0 0 1;
+    }
     """
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Exit", priority=True),
         Binding("ctrl+l", "clear_output", "Clear", priority=True),
+        Binding("ctrl+b", "toggle_sidebar", "Sidebar", priority=True),
+        Binding("ctrl+j", "sidebar_next", "Next", priority=True),
+        Binding("ctrl+k", "sidebar_prev", "Prev", priority=True),
         Binding("escape", "focus_input", "Input", priority=True),
     ]
 
@@ -600,6 +733,7 @@ class HubestApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield ProjectsSidebar(id="sidebar")
         yield SessionsPanel(id="sessions-panel")
         yield OutputLog(id="output-log", highlight=True, markup=True)
         with Vertical(id="input-container"):
@@ -623,6 +757,44 @@ class HubestApp(App):
     def action_clear_output(self):
         self.query_one("#output-log", OutputLog).clear()
 
+    def action_toggle_sidebar(self):
+        sidebar = self.query_one("#sidebar", ProjectsSidebar)
+        sidebar.display = not sidebar.display
+
+    def action_sidebar_next(self):
+        self.query_one("#sidebar", ProjectsSidebar).select_next()
+        self._update_input_placeholder()
+
+    def action_sidebar_prev(self):
+        self.query_one("#sidebar", ProjectsSidebar).select_prev()
+        self._update_input_placeholder()
+
+    def _update_input_placeholder(self):
+        sidebar = self.query_one("#sidebar", ProjectsSidebar)
+        inp = self.query_one("#command-input")
+        if sidebar.selected == "hub":
+            inp.placeholder = "Message all active projects..."
+        else:
+            inp.placeholder = f"Message {sidebar.selected}..."
+
+    def _send_to_hub(self, message):
+        """Broadcast message to all active sessions."""
+        states = scan_state_dir()
+        targets = []
+        for sid, state in states.items():
+            pname = project_name_from_cwd(state.get('cwd', ''), self.projects)
+            project = find_project_by_name(pname, self.projects)
+            if project and project not in targets:
+                targets.append(project)
+
+        if not targets:
+            self._log_text("No active sessions to send to.", "yellow")
+            return
+
+        self._log_text(f"→ Broadcasting to {len(targets)} project(s)...", "bright_cyan")
+        for project in targets:
+            self._send_to_session(project, message)
+
     def _log(self, *args, **kwargs):
         """Write to OutputLog."""
         self.query_one("#output-log", OutputLog).write(*args, **kwargs)
@@ -633,6 +805,7 @@ class HubestApp(App):
     def _refresh_projects(self):
         self.projects = load_projects()
         self.query_one("#sessions-panel", SessionsPanel).refresh_display()
+        self.query_one("#sidebar", ProjectsSidebar).refresh_display()
 
     # --- Input Handling ---
 
@@ -692,26 +865,17 @@ class HubestApp(App):
             self._log_text(f"Project \"{target}\" not found.", "red")
 
     def _route_natural_language(self, message):
-        matches = []
-        msg_lower = message.lower()
-        for project in self.projects:
-            for keyword in project.get('keywords', []):
-                if keyword.lower() in msg_lower:
-                    if project not in matches:
-                        matches.append(project)
-                    break
+        sidebar = self.query_one("#sidebar", ProjectsSidebar)
 
-        if len(matches) == 1:
-            self._send_to_session(matches[0], message)
-        elif len(matches) > 1:
-            self._log_text("Multiple projects matched:", "yellow")
-            self._show_selection(matches, lambda p: self._send_to_session(p, message))
-        else:
-            if not self.projects:
-                self._log_text("No projects registered. Use add <name> <path> to register.", "red")
+        # If a specific project is selected in the sidebar, send directly
+        if sidebar.selected != "hub":
+            project = find_project_by_name(sidebar.selected, self.projects)
+            if project:
+                self._send_to_session(project, message)
                 return
-            self._log_text("Which project should receive this?", "yellow")
-            self._show_selection(self.projects, lambda p: self._send_to_session(p, message))
+
+        # Hub mode: broadcast to all active sessions
+        self._send_to_hub(message)
 
     def _show_selection(self, items, callback):
         """Enter number selection mode."""
