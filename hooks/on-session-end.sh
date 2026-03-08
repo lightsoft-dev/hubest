@@ -1,5 +1,5 @@
 #!/bin/bash
-# SessionEnd 이벤트: Claude Code 세션 종료
+# SessionEnd event: Claude Code session has ended
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 

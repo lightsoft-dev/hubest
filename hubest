@@ -1,5 +1,5 @@
 #!/bin/bash
-# hubest — Claude Code 멀티세션 매니저 (인터랙티브 CLI)
+# hubest — Claude Code Multi-Session Manager (Interactive CLI)
 HUBEST_DIR="$HOME/.hubest"
 
 case "${1:-}" in
@@ -23,5 +23,5 @@ case "${1:-}" in
     ;;
 esac
 
-# 기본: 인터랙티브 셸 진입
+# Default: enter interactive shell
 python3 "$HUBEST_DIR/hubest_cli.py" interactive

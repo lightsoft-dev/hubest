@@ -1,8 +1,8 @@
 #!/bin/bash
-# Notification 이벤트: Claude Code가 사용자 입력을 기다리는 상태
+# Notification event: Claude Code is waiting for user input
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
-MESSAGE=$(echo "$INPUT" | jq -r '.message // "입력 대기 중"')
+MESSAGE=$(echo "$INPUT" | jq -r '.message // "Waiting for input"')
 CWD=$(echo "$INPUT" | jq -r '.cwd')
 
 mkdir -p "$HOME/.hubest/state"
@@ -18,6 +18,6 @@ jq -n \
   '{session_id: $sid, message: $msg, cwd: $cwd, timestamp: $ts, status: $status, last_event: $event}' \
   > "$TMPFILE" && mv "$TMPFILE" "$HOME/.hubest/state/${SESSION_ID}.json"
 
-# macOS 네이티브 알림
+# macOS native notification
 PROJECT=$(basename "$CWD")
-osascript -e "display notification \"$MESSAGE\" with title \"Hubest: $PROJECT\" subtitle \"입력 대기 중\"" 2>/dev/null
+osascript -e "display notification \"$MESSAGE\" with title \"Hubest: $PROJECT\" subtitle \"Waiting for input\"" 2>/dev/null

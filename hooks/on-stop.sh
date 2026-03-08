@@ -1,13 +1,13 @@
 #!/bin/bash
-# Stop 이벤트: Claude Code가 응답 완료, 다음 프롬프트 대기
+# Stop event: Claude Code finished responding, awaiting next prompt
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 CWD=$(echo "$INPUT" | jq -r '.cwd')
 
-# Claude Code가 직접 제공하는 last_assistant_message 사용
+# Use the last_assistant_message provided directly by Claude Code
 SUMMARY=$(echo "$INPUT" | jq -r '.last_assistant_message // ""' | head -c 500)
 
-# 없으면 기존 메시지 유지
+# If empty, keep existing message
 if [ -z "$SUMMARY" ]; then
   if [ -f "$HOME/.hubest/state/${SESSION_ID}.json" ]; then
     SUMMARY=$(jq -r '.message // ""' "$HOME/.hubest/state/${SESSION_ID}.json")

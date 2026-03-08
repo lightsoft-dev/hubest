@@ -1,5 +1,5 @@
 #!/bin/bash
-# PostToolUse 이벤트: Claude Code가 도구를 사용한 직후 — 작업 중 표시
+# PostToolUse event: fired right after Claude Code uses a tool — marks status as working
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 CWD=$(echo "$INPUT" | jq -r '.cwd')

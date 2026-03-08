@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hubest — Claude Code 멀티세션 매니저 TUI"""
+"""Hubest — Claude Code Multi-Session Manager TUI"""
 
 import sys
 import os
@@ -35,7 +35,7 @@ HOOKS_CONFIG = {
     }
 }
 
-# ─── YAML 유틸 ───
+# --- YAML Utils ---
 
 def _load_yaml(path):
     try:
@@ -90,7 +90,7 @@ def _simple_yaml_save(path, data):
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
 
-# ─── 유틸리티 함수 ───
+# --- Utility Functions ---
 
 def load_projects():
     if not PROJECTS_FILE.exists():
@@ -123,19 +123,19 @@ def time_ago(timestamp_str):
         diff = now - ts
         seconds = int(diff.total_seconds())
         if seconds < 0:
-            return '방금'
+            return 'just now'
         if seconds < 60:
-            return f'{seconds}초 전'
+            return f'{seconds}s ago'
         minutes = seconds // 60
         if minutes < 60:
-            return f'{minutes}분 전'
+            return f'{minutes}m ago'
         hours = minutes // 60
         if hours < 24:
-            return f'{hours}시간 전'
+            return f'{hours}h ago'
         days = hours // 24
-        return f'{days}일 전'
+        return f'{days}d ago'
     except (ValueError, TypeError):
-        return '알 수 없음'
+        return 'unknown'
 
 def is_stale(timestamp_str):
     try:
@@ -183,7 +183,7 @@ def merge_hooks_into_settings(settings_path):
         json.dump(settings, f, indent=2, ensure_ascii=False)
 
 def _find_iterm_session(project_name):
-    """hubest:{project_name}을 포함하는 iTerm2 세션을 찾아 탭 인덱스 반환."""
+    """Find an iTerm2 session containing hubest:{project_name} and return whether it exists."""
     target_title = f'hubest:{project_name}'
     script = f'''
     tell application "iTerm2"
@@ -230,7 +230,7 @@ def iterm2_switch_tab(project_name):
         return False
 
 def iterm2_send_text(project_name, text):
-    """기존 hubest:{project_name} 세션에 텍스트 전송. 탭 전환 없음."""
+    """Send text to existing hubest:{project_name} session without switching tabs."""
     target_title = f'hubest:{project_name}'
     escaped_text = text.replace('\\', '\\\\').replace('"', '\\"')
     script = f'''
@@ -255,7 +255,7 @@ def iterm2_send_text(project_name, text):
         return False
 
 def iterm2_create_tab(project_name, project_path):
-    """새 탭 생성 + Claude Code 실행. 포커스는 원래 탭으로 복귀."""
+    """Create a new tab and run Claude Code. Focus returns to original tab."""
     expanded_path = str(Path(project_path).expanduser().resolve())
     script = f'''
     tell application "iTerm2"
@@ -289,11 +289,11 @@ def find_project_by_name(name, projects):
             return p
     return None
 
-# ─── 원샷 명령어 ───
+# --- One-shot Commands ---
 
 def cmd_init():
     print()
-    print('  Hubest 초기 설정')
+    print('  Hubest Initial Setup')
     print('  ' + '─' * 40)
     print()
     dirs = [HUBEST_DIR, STATE_DIR, HUBEST_DIR / 'hooks', HUBEST_DIR / 'iterm', HUBEST_DIR / 'bin']
@@ -302,14 +302,14 @@ def cmd_init():
         print(f'  ✅ {d}')
     if not PROJECTS_FILE.exists():
         _save_yaml(str(PROJECTS_FILE), {'projects': []})
-        print(f'  ✅ {PROJECTS_FILE} (템플릿 생성)')
+        print(f'  ✅ {PROJECTS_FILE} (template created)')
     else:
-        print(f'  ⏭  {PROJECTS_FILE} (이미 존재)')
+        print(f'  ⏭  {PROJECTS_FILE} (already exists)')
     if not CONFIG_FILE.exists():
         _save_yaml(str(CONFIG_FILE), {'stale_hours': 24, 'watch_interval': 1, 'version': VERSION})
         print(f'  ✅ {CONFIG_FILE}')
     else:
-        print(f'  ⏭  {CONFIG_FILE} (이미 존재)')
+        print(f'  ⏭  {CONFIG_FILE} (already exists)')
     hooks_dir = HUBEST_DIR / 'hooks'
     for hf in ['on-notification.sh', 'on-stop.sh', 'on-session-start.sh', 'on-session-end.sh', 'on-activity.sh']:
         hp = hooks_dir / hf
@@ -317,13 +317,13 @@ def cmd_init():
             os.chmod(hp, 0o755)
             print(f'  ✅ {hp} (chmod +x)')
         else:
-            print(f'  ⚠️  {hp} 없음 — hubest를 재설치하세요')
+            print(f'  ⚠️  {hp} missing — please reinstall hubest')
     hubest_bin = HUBEST_DIR / 'bin' / 'hubest'
     if hubest_bin.exists():
         os.chmod(hubest_bin, 0o755)
         print(f'  ✅ {hubest_bin} (chmod +x)')
     print()
-    print('  의존성 확인')
+    print('  Dependency Check')
     print('  ' + '─' * 40)
     deps_ok = True
     if shutil.which('jq'):
@@ -346,25 +346,25 @@ def cmd_init():
         import yaml
         print(f'  ✅ pyyaml ({yaml.__version__})')
     except ImportError:
-        print('  ⚠️  pyyaml 없음 (선택사항) — pip3 install pyyaml')
+        print('  ⚠️  pyyaml not found (optional) — pip3 install pyyaml')
     print()
     if deps_ok:
-        print('  ✅ 초기 설정 완료!')
+        print('  ✅ Initial setup complete!')
     else:
-        print('  ⚠️  누락된 의존성을 설치한 후 다시 실행하세요.')
+        print('  ⚠️  Please install missing dependencies and run again.')
     hubest_bin_dir = str(HUBEST_DIR / 'bin')
     if hubest_bin_dir not in os.environ.get('PATH', '').split(':'):
         print()
-        print(f'  💡 PATH에 추가하세요:')
+        print(f'  💡 Add to your PATH:')
         print(f'     export PATH="$HOME/.hubest/bin:$PATH"')
     print()
-    print('  다음 단계: hubest add <이름> <경로> 로 프로젝트를 등록하세요.')
+    print('  Next step: Register a project with hubest add <name> <path>')
     print()
 
 def cmd_add_oneshot(args):
     parts = args.split()
     if len(parts) < 2:
-        print('  사용법: hubest add <이름> <경로> [--global]')
+        print('  Usage: hubest add <name> <path> [--global]')
         return
     use_global = '--global' in parts
     parts = [p for p in parts if p != '--global']
@@ -373,12 +373,12 @@ def cmd_add_oneshot(args):
 def _do_add_project(name, path, use_global=False):
     expanded_path = str(Path(path).expanduser().resolve())
     if not os.path.isdir(expanded_path):
-        print(f'  ❌ 디렉토리가 존재하지 않습니다: {expanded_path}')
+        print(f'  ❌ Directory does not exist: {expanded_path}')
         return
     projects = load_projects()
     for p in projects:
         if p['name'] == name:
-            print(f'  ⚠️  "{name}" 프로젝트가 이미 등록되어 있습니다.')
+            print(f'  ⚠️  Project "{name}" is already registered.')
             return
     keywords = [name]
     if '-' in name:
@@ -389,19 +389,19 @@ def _do_add_project(name, path, use_global=False):
     project = {'name': name, 'path': path, 'keywords': keywords}
     projects.append(project)
     save_projects(projects)
-    print(f'  ✅ 프로젝트 등록: {name} → {path}')
-    print(f'     키워드: {keywords}')
+    print(f'  ✅ Project registered: {name} → {path}')
+    print(f'     Keywords: {keywords}')
     if use_global:
         settings_path = Path.home() / '.claude' / 'settings.json'
         merge_hooks_into_settings(settings_path)
-        print(f'  ✅ 글로벌 hooks 주입: {settings_path}')
+        print(f'  ✅ Global hooks injected: {settings_path}')
     else:
         settings_path = Path(expanded_path) / '.claude' / 'settings.json'
         merge_hooks_into_settings(settings_path)
-        print(f'  ✅ 프로젝트 hooks 주입: {settings_path}')
+        print(f'  ✅ Project hooks injected: {settings_path}')
 
 
-# ─── Textual TUI ───
+# --- Textual TUI ---
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -416,7 +416,7 @@ from rich.console import Group
 
 
 class SessionsPanel(Static):
-    """세션 상태를 실시간으로 표시하는 위젯."""
+    """Widget that displays session status in real-time."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -450,10 +450,10 @@ class SessionsPanel(Static):
             expand=True,
         )
         table.add_column("", width=2, no_wrap=True)
-        table.add_column("프로젝트", style="bold", ratio=2, no_wrap=True)
-        table.add_column("상태", width=10, no_wrap=True)
-        table.add_column("메시지", ratio=3)
-        table.add_column("시간", width=10, no_wrap=True, style="dim")
+        table.add_column("Project", style="bold", ratio=2, no_wrap=True)
+        table.add_column("Status", width=10, no_wrap=True)
+        table.add_column("Message", ratio=3)
+        table.add_column("Time", width=10, no_wrap=True, style="dim")
 
         if result:
             for s in result:
@@ -501,7 +501,7 @@ class SessionsPanel(Static):
                     Text(ago),
                 )
         else:
-            # 등록된 프로젝트만 offline으로 표시
+            # Show registered projects as offline
             for p in self.projects:
                 table.add_row(
                     Text('✕', style='dim red'),
@@ -525,17 +525,17 @@ class SessionsPanel(Static):
 
 
 class OutputLog(RichLog):
-    """명령 출력 + 알림을 표시하는 영역."""
+    """Area for displaying command output and notifications."""
     pass
 
 
 class CommandInput(Input):
-    """명령어 입력 위젯."""
+    """Command input widget."""
     pass
 
 
 class HubestApp(App):
-    """Hubest TUI 앱."""
+    """Hubest TUI App."""
 
     TITLE = "Hubest"
     SUB_TITLE = f"Claude Code Session Manager v{VERSION}"
@@ -585,9 +585,9 @@ class HubestApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "종료", priority=True),
-        Binding("ctrl+l", "clear_output", "화면정리", priority=True),
-        Binding("escape", "focus_input", "입력창", priority=True),
+        Binding("ctrl+c", "quit", "Exit", priority=True),
+        Binding("ctrl+l", "clear_output", "Clear", priority=True),
+        Binding("escape", "focus_input", "Input", priority=True),
     ]
 
     def __init__(self):
@@ -604,7 +604,7 @@ class HubestApp(App):
         yield OutputLog(id="output-log", highlight=True, markup=True)
         with Vertical(id="input-container"):
             yield CommandInput(
-                placeholder="명령어 또는 메시지를 입력하세요...",
+                placeholder="Enter a command or message...",
                 id="command-input",
             )
         yield Footer()
@@ -612,8 +612,8 @@ class HubestApp(App):
     def on_mount(self):
         self.set_interval(1, self._background_watcher)
         log = self.query_one("#output-log", OutputLog)
-        log.write(Text("Hubest에 오신 것을 환영합니다!", style="bold bright_cyan"))
-        log.write(Text("'help' 또는 '?'를 입력하면 명령어 목록을 볼 수 있습니다.", style="dim"))
+        log.write(Text("Welcome to Hubest!", style="bold bright_cyan"))
+        log.write(Text("Type 'help' or '?' to see available commands.", style="dim"))
         log.write("")
         self.query_one("#command-input").focus()
 
@@ -624,7 +624,7 @@ class HubestApp(App):
         self.query_one("#output-log", OutputLog).clear()
 
     def _log(self, *args, **kwargs):
-        """OutputLog에 출력."""
+        """Write to OutputLog."""
         self.query_one("#output-log", OutputLog).write(*args, **kwargs)
 
     def _log_text(self, text, style=""):
@@ -634,7 +634,7 @@ class HubestApp(App):
         self.projects = load_projects()
         self.query_one("#sessions-panel", SessionsPanel).refresh_display()
 
-    # ─── 입력 처리 ───
+    # --- Input Handling ---
 
     def on_input_submitted(self, event: Input.Submitted):
         if event.input.id != "command-input":
@@ -645,11 +645,11 @@ class HubestApp(App):
         if not raw:
             return
 
-        # 히스토리에 저장
+        # Save to history
         self._command_history.append(raw)
         self._history_idx = -1
 
-        # 번호 선택 대기 중이면 처리
+        # Handle pending number selection
         if self._pending_selection is not None:
             self._handle_selection(raw)
             return
@@ -658,7 +658,7 @@ class HubestApp(App):
         self._handle_command(raw)
 
     def _handle_command(self, raw_input):
-        # @멘션
+        # @mention
         if raw_input.startswith('@'):
             self._handle_mention(raw_input)
             return
@@ -677,7 +677,7 @@ class HubestApp(App):
     def _handle_mention(self, raw_input):
         match = re.match(r'@(\S+)\s*(.*)', raw_input)
         if not match:
-            self._log_text("사용법: @프로젝트명 메시지", "yellow")
+            self._log_text("Usage: @project message", "yellow")
             return
         target = match.group(1)
         message = match.group(2) or ''
@@ -686,10 +686,10 @@ class HubestApp(App):
             if message:
                 self._send_to_session(project, message)
             else:
-                self._log_text(f"→ {project['name']} 탭으로 전환", "dim")
+                self._log_text(f"→ Switching to {project['name']} tab", "dim")
                 iterm2_switch_tab(project['name'])
         else:
-            self._log_text(f"프로젝트 \"{target}\"를 찾을 수 없습니다.", "red")
+            self._log_text(f"Project \"{target}\" not found.", "red")
 
     def _route_natural_language(self, message):
         matches = []
@@ -704,30 +704,30 @@ class HubestApp(App):
         if len(matches) == 1:
             self._send_to_session(matches[0], message)
         elif len(matches) > 1:
-            self._log_text("여러 프로젝트가 매칭됩니다:", "yellow")
+            self._log_text("Multiple projects matched:", "yellow")
             self._show_selection(matches, lambda p: self._send_to_session(p, message))
         else:
             if not self.projects:
-                self._log_text("등록된 프로젝트가 없습니다. add <이름> <경로>로 등록하세요.", "red")
+                self._log_text("No projects registered. Use add <name> <path> to register.", "red")
                 return
-            self._log_text("어떤 프로젝트에 전달할까요?", "yellow")
+            self._log_text("Which project should receive this?", "yellow")
             self._show_selection(self.projects, lambda p: self._send_to_session(p, message))
 
     def _show_selection(self, items, callback):
-        """번호 선택 모드 진입."""
+        """Enter number selection mode."""
         for i, p in enumerate(items, 1):
             self._log(Text(f"  {i}) {p['name']}", style="bold"))
-        self._log_text("번호를 입력하세요 (Enter: 취소)", "dim")
+        self._log_text("Enter a number (Enter: cancel)", "dim")
         self._pending_selection = (items, callback)
-        self.query_one("#command-input").placeholder = "번호 선택..."
+        self.query_one("#command-input").placeholder = "Select number..."
 
     def _handle_selection(self, raw):
         items, callback = self._pending_selection
         self._pending_selection = None
-        self.query_one("#command-input").placeholder = "명령어 또는 메시지를 입력하세요..."
+        self.query_one("#command-input").placeholder = "Enter a command or message..."
 
         if not raw:
-            self._log_text("취소됨", "dim")
+            self._log_text("Cancelled", "dim")
             return
 
         try:
@@ -735,39 +735,39 @@ class HubestApp(App):
             if 0 <= idx < len(items):
                 callback(items[idx])
             else:
-                self._log_text("잘못된 번호", "red")
+                self._log_text("Invalid number", "red")
         except ValueError:
-            self._log_text("취소됨", "dim")
-            # 입력이 숫자가 아니면 일반 명령으로 재처리
+            self._log_text("Cancelled", "dim")
+            # Non-numeric input, reprocess as a regular command
             self._log(Text(f"❯ {raw}", style="bold green"))
             self._handle_command(raw)
 
     def _send_to_session(self, project, message):
         success = iterm2_send_text(project['name'], message)
         if success:
-            self._log_text(f"✓ {project['name']} 에 전달됨", "green")
+            self._log_text(f"✓ Sent to {project['name']}", "green")
         else:
-            # 탭이 없으면 자동 생성 후 메시지 전달 재시도
-            self._log_text(f"⏳ {project['name']} 탭 생성 + Claude Code 시작 중...", "dim")
+            # Tab not found, auto-create and retry
+            self._log_text(f"⏳ Creating {project['name']} tab + starting Claude Code...", "dim")
             if iterm2_create_tab(project['name'], project.get('path', '')):
-                self._log_text(f"✓ {project['name']} 탭 생성됨 — 메시지 전달 대기 중...", "green")
+                self._log_text(f"✓ {project['name']} tab created — waiting to deliver message...", "green")
                 self._retry_send_async(project['name'], message)
             else:
-                self._log_text(f"✕ {project['name']} 탭 생성 실패", "red")
+                self._log_text(f"✕ Failed to create {project['name']} tab", "red")
 
     @work(thread=True)
     def _retry_send_async(self, project_name, message):
-        """Claude Code 시작을 기다렸다가 메시지 전달 (백그라운드)."""
+        """Wait for Claude Code to start, then deliver message (background)."""
         import time
         for attempt in range(10):
             time.sleep(3)
             if iterm2_send_text(project_name, message):
                 self.call_from_thread(
-                    self._log_text, f"✓ {project_name} 에 메시지 전달됨", "green"
+                    self._log_text, f"✓ Message delivered to {project_name}", "green"
                 )
                 return
         self.call_from_thread(
-            self._log_text, f"⚠ {project_name} — 메시지 전달 실패. 수동으로 전달하세요: {message}", "yellow"
+            self._log_text, f"⚠ {project_name} — Failed to deliver message. Please send manually: {message}", "yellow"
         )
 
     def _get_states_with_projects(self):
@@ -793,21 +793,21 @@ class HubestApp(App):
                 pname = project_name_from_cwd(state.get('cwd', ''), self.projects)
                 msg = state.get('message', '')
 
-                # 새로 waiting 상태가 됐거나, waiting 메시지가 바뀌었을 때
+                # New waiting state, or waiting message changed
                 if (new_status == 'waiting'
                     and (old_status != 'waiting'
                          or old.get('timestamp') != state.get('timestamp') if old else True)):
-                    self._log(Text(f"⚡ [{pname}] 입력 대기: {msg or '입력 대기 중'}", style="bold yellow"))
+                    self._log(Text(f"⚡ [{pname}] Waiting for input: {msg or 'Waiting for input'}", style="bold yellow"))
                     self.bell()
 
-                # working → idle 전환: 작업 완료 알림 + 내용 표시
+                # working → idle transition: task complete notification + show content
                 elif new_status == 'idle' and old_status == 'working':
                     from rich.rule import Rule
-                    self._log(Rule(f" ✅ {pname} — 작업 완료 ", style="green"))
+                    self._log(Rule(f" ✅ {pname} — Task complete ", style="green"))
                     if msg:
                         self._log(Text(msg))
                     else:
-                        self._log(Text("(내용 없음)", style="dim"))
+                        self._log(Text("(no content)", style="dim"))
                     self._log(Rule(style="green"))
                     self._log(Text(""))
                     self.bell()
@@ -816,7 +816,7 @@ class HubestApp(App):
         except Exception:
             pass
 
-    # ─── 명령어 핸들러 ───
+    # --- Command Handlers ---
 
     def cmd_status(self, args=''):
         states = self._get_states_with_projects()
@@ -860,35 +860,35 @@ class HubestApp(App):
                     Text(''), Text(''),
                 )
             if not self.projects:
-                self._log_text("등록된 프로젝트 없음", "dim")
+                self._log_text("No projects registered", "dim")
                 return
 
         self._log(Panel(
             table,
-            title=f"[bold]세션 상태 ({total_reg}개 등록, {total_active}개 활성)[/]",
+            title=f"[bold]Session Status ({total_reg} registered, {total_active} active)[/]",
             border_style="bright_cyan",
             padding=(0, 1),
         ))
 
         if waiting > 0:
-            self._log_text(f"🔔 입력 대기 {waiting}건 — 'p'를 입력하여 확인", "yellow")
+            self._log_text(f"🔔 {waiting} waiting for input — type 'p' to view", "yellow")
 
     def cmd_pending(self, args=''):
         states = self._get_states_with_projects()
         waiting = [s for s in states if s.get('status') == 'waiting']
 
         if not waiting:
-            self._log_text("✓ 입력 대기 중인 세션이 없습니다.", "green")
+            self._log_text("✓ No sessions waiting for input.", "green")
             return
 
         for i, s in enumerate(waiting, 1):
             pname = s['_project_name']
-            msg = s.get('message', '입력 대기 중')
+            msg = s.get('message', 'Waiting for input')
             ago = time_ago(s.get('timestamp', ''))
             panel = Panel(
                 Text.assemble(
                     (f"\"{msg}\"\n", "italic"),
-                    (f"대기 시간: {ago}", "dim"),
+                    (f"Waiting: {ago}", "dim"),
                 ),
                 title=f"[bold yellow]{i}) {pname}[/]",
                 border_style="yellow",
@@ -903,9 +903,9 @@ class HubestApp(App):
 
     def _do_switch(self, name):
         if iterm2_switch_tab(name):
-            self._log_text(f"✓ {name} 탭으로 전환됨", "green")
+            self._log_text(f"✓ Switched to {name} tab", "green")
         else:
-            self._log_text(f"⚠ {name} 탭을 찾을 수 없습니다.", "yellow")
+            self._log_text(f"⚠ Tab for {name} not found.", "yellow")
 
     def cmd_switch(self, args=''):
         if args:
@@ -913,7 +913,7 @@ class HubestApp(App):
             if project:
                 self._do_switch(project['name'])
             else:
-                self._log_text(f"프로젝트 \"{args.strip()}\"를 찾을 수 없습니다.", "red")
+                self._log_text(f"Project \"{args.strip()}\" not found.", "red")
             return
 
         states = self._get_states_with_projects()
@@ -930,7 +930,7 @@ class HubestApp(App):
                 items.append({'name': p['name'], 'status': 'offline'})
 
         if not items:
-            self._log_text("등록된 프로젝트가 없습니다.", "dim")
+            self._log_text("No projects registered.", "dim")
             return
 
         for i, item in enumerate(items, 1):
@@ -948,42 +948,42 @@ class HubestApp(App):
 
     def cmd_send(self, args=''):
         if not args:
-            self._log_text("사용법: send <프로젝트> <메시지>", "yellow")
+            self._log_text("Usage: send <project> <message>", "yellow")
             return
         parts = args.split(maxsplit=1)
         if len(parts) < 2:
-            self._log_text("사용법: send <프로젝트> <메시지>", "yellow")
+            self._log_text("Usage: send <project> <message>", "yellow")
             return
         target, message = parts
         project = find_project_by_name(target, self.projects)
         if project:
             self._send_to_session(project, message)
         else:
-            self._log_text(f"프로젝트 \"{target}\"를 찾을 수 없습니다.", "red")
+            self._log_text(f"Project \"{target}\" not found.", "red")
 
     def cmd_start(self, args=''):
         if args:
             project = find_project_by_name(args.strip(), self.projects)
             if project:
-                self._log_text(f"⏳ {project['name']} 세션 시작 중...", "dim")
+                self._log_text(f"⏳ Starting {project['name']} session...", "dim")
                 if iterm2_create_tab(project['name'], project['path']):
-                    self._log_text(f"✓ {project['name']} 탭 생성됨", "green")
+                    self._log_text(f"✓ {project['name']} tab created", "green")
                 else:
-                    self._log_text(f"✕ 탭 생성 실패", "red")
+                    self._log_text(f"✕ Failed to create tab", "red")
             else:
-                self._log_text(f"프로젝트 \"{args.strip()}\"를 찾을 수 없습니다.", "red")
+                self._log_text(f"Project \"{args.strip()}\" not found.", "red")
             return
 
         if not self.projects:
-            self._log_text("등록된 프로젝트가 없습니다.", "red")
+            self._log_text("No projects registered.", "red")
             return
 
-        self._log_text(f"⏳ {len(self.projects)}개 프로젝트 세션 시작 중...", "dim")
+        self._log_text(f"⏳ Starting sessions for {len(self.projects)} projects...", "dim")
         for p in self.projects:
             if iterm2_create_tab(p['name'], p['path']):
                 self._log_text(f"  ✓ {p['name']}", "green")
             else:
-                self._log_text(f"  ✕ {p['name']} — 실패", "red")
+                self._log_text(f"  ✕ {p['name']} — failed", "red")
 
     def cmd_stop(self, args=''):
         if args:
@@ -998,37 +998,37 @@ class HubestApp(App):
                         if sf.exists():
                             sf.unlink()
                             cleaned += 1
-                self._log_text(f"✓ {project['name']} 상태 파일 {cleaned}개 정리됨", "green")
-                self._log_text("  iTerm2 탭의 Claude Code는 수동으로 종료하세요.", "dim")
+                self._log_text(f"✓ {project['name']} — {cleaned} state file(s) cleaned", "green")
+                self._log_text("  Please close Claude Code in the iTerm2 tab manually.", "dim")
             else:
-                self._log_text(f"프로젝트 \"{args.strip()}\"를 찾을 수 없습니다.", "red")
+                self._log_text(f"Project \"{args.strip()}\" not found.", "red")
             return
 
         states = scan_state_dir()
         if not states:
-            self._log_text("정리할 상태 파일 없음", "dim")
+            self._log_text("No state files to clean", "dim")
             return
         for sid in states:
             sf = STATE_DIR / f'{sid}.json'
             if sf.exists():
                 sf.unlink()
-        self._log_text(f"✓ {len(states)}개 상태 파일 정리됨", "green")
+        self._log_text(f"✓ {len(states)} state file(s) cleaned", "green")
 
     def cmd_dash(self, args=''):
-        """대시보드 — TUI에서는 세션 패널이 이미 실시간이므로 status를 표시."""
-        self._log_text("세션 패널이 2초마다 자동 갱신됩니다.", "dim")
+        """Dashboard — session panel auto-refreshes in TUI, so just show status."""
+        self._log_text("Session panel auto-refreshes every 2 seconds.", "dim")
         self.cmd_status()
 
     def cmd_projects(self, args=''):
         self._refresh_projects()
         if not self.projects:
-            self._log_text("등록된 프로젝트가 없습니다. add <이름> <경로>로 등록하세요.", "dim")
+            self._log_text("No projects registered. Use add <name> <path> to register.", "dim")
             return
 
         table = Table(show_header=True, header_style="bold dim", box=None, padding=(0, 1))
-        table.add_column("프로젝트", style="bold")
-        table.add_column("경로")
-        table.add_column("키워드", style="italic")
+        table.add_column("Project", style="bold")
+        table.add_column("Path")
+        table.add_column("Keywords", style="italic")
 
         for p in self.projects:
             kws = ', '.join(p.get('keywords', []))
@@ -1036,32 +1036,32 @@ class HubestApp(App):
 
         self._log(Panel(
             table,
-            title=f"[bold]등록된 프로젝트 ({len(self.projects)}개)[/]",
+            title=f"[bold]Registered Projects ({len(self.projects)})[/]",
             border_style="bright_cyan",
             padding=(0, 1),
         ))
 
     def cmd_add(self, args=''):
         if not args:
-            self._log_text("사용법: add <이름> <경로> [--global]", "yellow")
+            self._log_text("Usage: add <name> <path> [--global]", "yellow")
             return
         parts = args.split()
         use_global = '--global' in parts
         parts = [p for p in parts if p != '--global']
         if len(parts) < 2:
-            self._log_text("사용법: add <이름> <경로> [--global]", "yellow")
+            self._log_text("Usage: add <name> <path> [--global]", "yellow")
             return
 
         name, path = parts[0], parts[1]
         expanded_path = str(Path(path).expanduser().resolve())
         if not os.path.isdir(expanded_path):
-            self._log_text(f"디렉토리가 존재하지 않습니다: {expanded_path}", "red")
+            self._log_text(f"Directory does not exist: {expanded_path}", "red")
             return
 
         projects = load_projects()
         for p in projects:
             if p['name'] == name:
-                self._log_text(f"\"{name}\" 프로젝트가 이미 등록되어 있습니다.", "yellow")
+                self._log_text(f"Project \"{name}\" is already registered.", "yellow")
                 return
 
         keywords = [name]
@@ -1074,22 +1074,22 @@ class HubestApp(App):
         project = {'name': name, 'path': path, 'keywords': keywords}
         projects.append(project)
         save_projects(projects)
-        self._log_text(f"✓ 프로젝트 등록: {name} → {path}", "green")
-        self._log_text(f"  키워드: {', '.join(keywords)}", "dim")
+        self._log_text(f"✓ Project registered: {name} → {path}", "green")
+        self._log_text(f"  Keywords: {', '.join(keywords)}", "dim")
 
         if use_global:
             settings_path = Path.home() / '.claude' / 'settings.json'
         else:
             settings_path = Path(expanded_path) / '.claude' / 'settings.json'
         merge_hooks_into_settings(settings_path)
-        self._log_text(f"  hooks 주입: {settings_path}", "dim")
+        self._log_text(f"  Hooks injected: {settings_path}", "dim")
         self._refresh_projects()
 
     def cmd_layout(self, args=''):
-        self._log_text("layout 기능은 향후 구현 예정입니다.", "dim")
+        self._log_text("Layout feature is not yet implemented.", "dim")
 
     def cmd_logs(self, args=''):
-        self._log_text("logs 기능은 향후 구현 예정입니다.", "dim")
+        self._log_text("Logs feature is not yet implemented.", "dim")
 
     def cmd_help(self, args=''):
         help_table = Table(show_header=False, box=None, padding=(0, 1))
@@ -1098,18 +1098,18 @@ class HubestApp(App):
         help_table.add_column("desc")
 
         cmds = [
-            ("status",   "s",  "전체 세션 상태 표시"),
-            ("pending",  "p",  "입력 대기 세션 확인 + 전환"),
-            ("switch",   "sw", "세션 전환"),
-            ("send",     "",   "프로젝트에 메시지 전달"),
-            ("start",    "",   "세션 시작 (iTerm2 탭 생성)"),
-            ("stop",     "",   "세션 종료 + 상태 정리"),
-            ("dash",     "d",  "세션 상태 새로고침"),
-            ("projects", "pr", "등록된 프로젝트 목록"),
-            ("add",      "",   "프로젝트 등록"),
-            ("clear",    "cls","출력 영역 정리 (Ctrl+L)"),
-            ("help",     "?,h","이 도움말"),
-            ("exit",     "q",  "종료 (Ctrl+C)"),
+            ("status",   "s",  "Show all session statuses"),
+            ("pending",  "p",  "View waiting sessions + switch"),
+            ("switch",   "sw", "Switch to a session"),
+            ("send",     "",   "Send message to a project"),
+            ("start",    "",   "Start session (create iTerm2 tab)"),
+            ("stop",     "",   "Stop session + clean state"),
+            ("dash",     "d",  "Refresh session status"),
+            ("projects", "pr", "List registered projects"),
+            ("add",      "",   "Register a project"),
+            ("clear",    "cls","Clear output (Ctrl+L)"),
+            ("help",     "?,h","Show this help"),
+            ("exit",     "q",  "Exit (Ctrl+C)"),
         ]
         for c, a, d in cmds:
             help_table.add_row(c, a, d)
@@ -1119,28 +1119,28 @@ class HubestApp(App):
                 help_table,
                 Text(""),
                 Text.assemble(
-                    ("자연어 입력", "bold"),
-                    (" — 키워드가 포함된 문장을 입력하면 자동으로 해당 프로젝트에 라우팅", ""),
+                    ("Natural language", "bold"),
+                    (" — type a sentence with keywords to auto-route to the matching project", ""),
                 ),
                 Text.assemble(
-                    ("@프로젝트 메시지", "bold bright_cyan"),
-                    (" — 명시적으로 프로젝트를 지정하여 메시지 전달", ""),
+                    ("@project message", "bold bright_cyan"),
+                    (" — explicitly target a project to send a message", ""),
                 ),
             ),
-            title="[bold]Hubest 명령어[/]",
+            title="[bold]Hubest Commands[/]",
             border_style="bright_cyan",
             padding=(1, 2),
         ))
 
     def cmd_exit(self, args=''):
-        self._log_text("세션은 유지됩니다. 안녕히!", "dim")
+        self._log_text("Sessions will persist. Goodbye!", "dim")
         self.exit()
 
     def cmd_clear(self, args=''):
         self.action_clear_output()
 
 
-# ─── 메인 ───
+# --- Main ---
 
 def main():
     if len(sys.argv) < 2:
@@ -1155,20 +1155,20 @@ def main():
         cmd_add_oneshot(args)
     elif command == 'help':
         print()
-        print('  Hubest — Claude Code 멀티세션 매니저')
+        print('  Hubest — Claude Code Multi-Session Manager')
         print()
-        print('  사용법:')
-        print('    hubest              TUI 진입')
-        print('    hubest init         초기 설정')
-        print('    hubest add <n> <p>  프로젝트 등록')
-        print('    hubest --version    버전 표시')
-        print('    hubest --help       이 도움말')
+        print('  Usage:')
+        print('    hubest              Launch TUI')
+        print('    hubest init         Initial setup')
+        print('    hubest add <n> <p>  Register a project')
+        print('    hubest --version    Show version')
+        print('    hubest --help       Show this help')
         print()
     elif command == 'interactive':
         app = HubestApp()
         app.run()
     else:
-        print(f'  알 수 없는 명령: {command}')
+        print(f'  Unknown command: {command}')
 
 if __name__ == '__main__':
     main()
