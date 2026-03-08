@@ -25,6 +25,10 @@ COMMAND_ALIASES = {
     '?': 'help', 'q': 'exit', 'quit': 'exit', 'cls': 'clear',
 }
 
+SLASH_COMMANDS = {
+    'add': 'Add a project to track',
+}
+
 HOOKS_CONFIG = {
     "hooks": {
         "Notification": [{"matcher": "", "hooks": [{"type": "command", "command": str(HUBEST_DIR / "hooks" / "on-notification.sh"), "async": True, "timeout": 10}]}],
@@ -46,6 +50,7 @@ def _load_yaml(path):
         return _simple_yaml_load(path)
 
 def _save_yaml(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
         import yaml
         with open(path, 'w', encoding='utf-8') as f:
@@ -584,9 +589,6 @@ class SessionsPanel(Static):
         order = {'waiting': 0, 'working': 1, 'idle': 2}
         result.sort(key=lambda s: order.get(s.get('status', ''), 3))
 
-        total_active = len(result)
-        waiting_count = sum(1 for s in result if s.get('status') == 'waiting')
-
         table = Table(
             show_header=False,
             box=None,
@@ -634,22 +636,40 @@ class SessionsPanel(Static):
                     Text(msg, style="italic" if status == 'waiting' else ""),
                 )
 
-        title = f"Sessions — {total_active} active"
-        if waiting_count > 0:
-            title += f" [bold yellow]({waiting_count} waiting)[/]"
-
-        panel = Panel(
-            table,
-            title=f"[bold]{title}[/]",
-            border_style="bright_cyan",
-            padding=(0, 1),
-        )
-        self.update(panel)
+        self.update(table)
 
 
 class OutputLog(RichLog):
     """Area for displaying command output and notifications."""
     pass
+
+
+class SlashPopup(Static):
+    """Popup showing available slash commands above the input."""
+
+    def update_commands(self, filter_text=''):
+        """Update displayed commands based on filter text."""
+        matches = []
+        for cmd, desc in SLASH_COMMANDS.items():
+            if cmd.startswith(filter_text):
+                matches.append((cmd, desc))
+
+        if not matches:
+            self.display = False
+            return
+
+        self.display = True
+        lines = []
+        for cmd, desc in matches:
+            lines.append(Text.assemble(
+                ("  /", "bold bright_cyan"),
+                (cmd, "bold bright_cyan"),
+                (f"  {desc}", "dim"),
+            ))
+        self.update(Group(*lines))
+
+    def hide(self):
+        self.display = False
 
 
 class CommandInput(Input):
@@ -712,6 +732,13 @@ class HubestApp(App):
         height: 100%;
         margin: 0 0 0 1;
     }
+
+    #slash-popup {
+        height: auto;
+        max-height: 6;
+        margin: 0 1;
+        display: none;
+    }
     """
 
     BINDINGS = [
@@ -736,6 +763,7 @@ class HubestApp(App):
         yield ProjectsSidebar(id="sidebar")
         yield SessionsPanel(id="sessions-panel")
         yield OutputLog(id="output-log", highlight=True, markup=True)
+        yield SlashPopup(id="slash-popup")
         with Vertical(id="input-container"):
             yield CommandInput(
                 placeholder="Enter a command or message...",
@@ -751,6 +779,18 @@ class HubestApp(App):
         log.write("")
         self.query_one("#command-input").focus()
 
+    def on_input_changed(self, event: Input.Changed):
+        if event.input.id != "command-input":
+            return
+        value = event.value
+        popup = self.query_one("#slash-popup", SlashPopup)
+        if value.startswith('/'):
+            # Extract the command part (text after / up to first space)
+            after_slash = value[1:].split(' ', 1)[0]
+            popup.update_commands(after_slash)
+        else:
+            popup.hide()
+
     def action_focus_input(self):
         self.query_one("#command-input").focus()
 
@@ -764,10 +804,12 @@ class HubestApp(App):
     def action_sidebar_next(self):
         self.query_one("#sidebar", ProjectsSidebar).select_next()
         self._update_input_placeholder()
+        self._switch_to_selected_project()
 
     def action_sidebar_prev(self):
         self.query_one("#sidebar", ProjectsSidebar).select_prev()
         self._update_input_placeholder()
+        self._switch_to_selected_project()
 
     def _update_input_placeholder(self):
         sidebar = self.query_one("#sidebar", ProjectsSidebar)
@@ -777,22 +819,20 @@ class HubestApp(App):
         else:
             inp.placeholder = f"Message {sidebar.selected}..."
 
-    def _send_to_hub(self, message):
-        """Broadcast message to all active sessions."""
-        states = scan_state_dir()
-        targets = []
-        for sid, state in states.items():
-            pname = project_name_from_cwd(state.get('cwd', ''), self.projects)
-            project = find_project_by_name(pname, self.projects)
-            if project and project not in targets:
-                targets.append(project)
+    @work(thread=True)
+    def _switch_to_selected_project(self):
+        sidebar = self.query_one("#sidebar", ProjectsSidebar)
+        if sidebar.selected != "hub":
+            iterm2_switch_tab(sidebar.selected)
 
-        if not targets:
-            self._log_text("No active sessions to send to.", "yellow")
+    def _send_to_hub(self, message):
+        """Broadcast message to all registered projects (auto-creates sessions if needed)."""
+        if not self.projects:
+            self._log_text("No projects registered. Use /add <path> to register.", "yellow")
             return
 
-        self._log_text(f"→ Broadcasting to {len(targets)} project(s)...", "bright_cyan")
-        for project in targets:
+        self._log_text(f"→ Broadcasting to {len(self.projects)} project(s)...", "bright_cyan")
+        for project in self.projects:
             self._send_to_session(project, message)
 
     def _log(self, *args, **kwargs):
@@ -814,6 +854,7 @@ class HubestApp(App):
             return
         raw = event.value.strip()
         event.input.value = ""
+        self.query_one("#slash-popup", SlashPopup).hide()
 
         if not raw:
             return
@@ -831,6 +872,11 @@ class HubestApp(App):
         self._handle_command(raw)
 
     def _handle_command(self, raw_input):
+        # Slash commands
+        if raw_input.startswith('/'):
+            self._handle_slash_command(raw_input)
+            return
+
         # @mention
         if raw_input.startswith('@'):
             self._handle_mention(raw_input)
@@ -869,12 +915,15 @@ class HubestApp(App):
 
         # If a specific project is selected in the sidebar, send directly
         if sidebar.selected != "hub":
+            self._refresh_projects()
             project = find_project_by_name(sidebar.selected, self.projects)
             if project:
                 self._send_to_session(project, message)
                 return
+            self._log_text(f"Project \"{sidebar.selected}\" not found.", "red")
+            return
 
-        # Hub mode: broadcast to all active sessions
+        # Hub mode: broadcast to all registered projects
         self._send_to_hub(message)
 
     def _show_selection(self, items, callback):
@@ -921,15 +970,27 @@ class HubestApp(App):
 
     @work(thread=True)
     def _retry_send_async(self, project_name, message):
-        """Wait for Claude Code to start, then deliver message (background)."""
+        """Wait for Claude Code SessionStart hook, then deliver message."""
         import time
-        for attempt in range(10):
-            time.sleep(3)
-            if iterm2_send_text(project_name, message):
-                self.call_from_thread(
-                    self._log_text, f"✓ Message delivered to {project_name}", "green"
-                )
-                return
+        projects = load_projects()
+        project = find_project_by_name(project_name, projects)
+        project_path = str(Path(project['path']).expanduser().resolve()) if project else None
+
+        # Wait for state file with matching cwd to appear (SessionStart hook)
+        for attempt in range(30):
+            time.sleep(1)
+            if project_path:
+                states = scan_state_dir()
+                for sid, state in states.items():
+                    cwd = str(Path(state.get('cwd', '')).expanduser().resolve())
+                    if cwd == project_path and state.get('status') in ('idle', 'waiting'):
+                        # Session is ready — send message
+                        if iterm2_send_text(project_name, message):
+                            self.call_from_thread(
+                                self._log_text, f"✓ Message delivered to {project_name}", "green"
+                            )
+                            return
+
         self.call_from_thread(
             self._log_text, f"⚠ {project_name} — Failed to deliver message. Please send manually: {message}", "yellow"
         )
@@ -979,6 +1040,83 @@ class HubestApp(App):
             self.known_states = current
         except Exception:
             pass
+
+    # --- Slash Command Handlers ---
+
+    def _handle_slash_command(self, raw_input):
+        """Parse and dispatch slash commands."""
+        # Hide popup
+        self.query_one("#slash-popup", SlashPopup).hide()
+
+        stripped = raw_input[1:]  # remove leading /
+        parts = stripped.split(maxsplit=1)
+        cmd = parts[0].lower() if parts else ''
+        args = parts[1] if len(parts) > 1 else ''
+
+        if not cmd:
+            self._log_text("Type a command after /. Try /help or /add <path>", "yellow")
+            return
+
+        handler = getattr(self, f'slash_{cmd}', None)
+        if handler:
+            handler(args)
+        else:
+            self._log_text(f"Unknown command: /{cmd}", "red")
+            available = ', '.join(f'/{c}' for c in SLASH_COMMANDS)
+            self._log_text(f"  Available: {available}", "dim")
+
+    def slash_add(self, args=''):
+        """Add a project by path. Name is auto-derived from directory basename."""
+        if not args:
+            self._log_text("Usage: /add <path> [--global]", "yellow")
+            return
+
+        parts = args.split()
+        use_global = '--global' in parts
+        parts = [p for p in parts if p != '--global']
+        if not parts:
+            self._log_text("Usage: /add <path> [--global]", "yellow")
+            return
+
+        path = parts[0]
+        expanded_path = str(Path(path).expanduser().resolve())
+        if not os.path.isdir(expanded_path):
+            self._log_text(f"Directory does not exist: {expanded_path}", "red")
+            return
+
+        # Auto-derive name from basename
+        name = os.path.basename(expanded_path)
+
+        # If name already exists, use parent/dirname format
+        projects = load_projects()
+        existing_names = {p['name'] for p in projects}
+        if name in existing_names:
+            parent = os.path.basename(os.path.dirname(expanded_path))
+            name = f"{parent}/{name}" if parent else name
+            if name in existing_names:
+                self._log_text(f"Project \"{name}\" is already registered.", "yellow")
+                return
+
+        keywords = [name]
+        basename = os.path.basename(expanded_path)
+        if basename != name and basename not in keywords:
+            keywords.append(basename)
+        if '-' in name:
+            keywords.extend(name.split('-'))
+
+        project = {'name': name, 'path': path, 'keywords': keywords}
+        projects.append(project)
+        save_projects(projects)
+        self._log_text(f"✓ Project registered: {name} → {path}", "green")
+        self._log_text(f"  Keywords: {', '.join(keywords)}", "dim")
+
+        if use_global:
+            settings_path = Path.home() / '.claude' / 'settings.json'
+        else:
+            settings_path = Path(expanded_path) / '.claude' / 'settings.json'
+        merge_hooks_into_settings(settings_path)
+        self._log_text(f"  Hooks injected: {settings_path}", "dim")
+        self._refresh_projects()
 
     # --- Command Handlers ---
 
@@ -1278,9 +1416,19 @@ class HubestApp(App):
         for c, a, d in cmds:
             help_table.add_row(c, a, d)
 
+        # Slash commands section
+        slash_table = Table(show_header=False, box=None, padding=(0, 1))
+        slash_table.add_column("cmd", style="bold bright_cyan", width=20)
+        slash_table.add_column("desc")
+        for cmd, desc in SLASH_COMMANDS.items():
+            slash_table.add_row(f"/{cmd}", desc)
+
         self._log(Panel(
             Group(
                 help_table,
+                Text(""),
+                Text("Slash Commands", style="bold underline"),
+                slash_table,
                 Text(""),
                 Text.assemble(
                     ("Natural language", "bold"),
