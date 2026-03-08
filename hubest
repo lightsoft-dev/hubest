@@ -1,0 +1,27 @@
+#!/bin/bash
+# hubest — Claude Code 멀티세션 매니저 (인터랙티브 CLI)
+HUBEST_DIR="$HOME/.hubest"
+
+case "${1:-}" in
+  init)
+    shift
+    python3 "$HUBEST_DIR/hubest_cli.py" init "$@"
+    exit $?
+    ;;
+  add)
+    shift
+    python3 "$HUBEST_DIR/hubest_cli.py" add "$@"
+    exit $?
+    ;;
+  --help|-h|help)
+    python3 "$HUBEST_DIR/hubest_cli.py" help
+    exit 0
+    ;;
+  --version|-v)
+    echo "hubest v0.1.0"
+    exit 0
+    ;;
+esac
+
+# 기본: 인터랙티브 셸 진입
+python3 "$HUBEST_DIR/hubest_cli.py" interactive
