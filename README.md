@@ -32,6 +32,15 @@ iTerm2 + Claude Code Hooks 기반의 멀티 프로젝트 세션 매니저 TUI.
 
 ## 설치
 
+### Homebrew (권장)
+
+```bash
+brew install lightsoft-dev/tap/hubest
+hubest init
+```
+
+### 수동 설치
+
 ```bash
 # 1. 클론
 git clone https://github.com/lightsoft-dev/hubest.git
