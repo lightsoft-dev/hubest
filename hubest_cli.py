@@ -29,6 +29,8 @@ SLASH_COMMANDS = {
     'add': 'Add a project to track',
 }
 
+CLAUDE_CLI = Path.home() / '.claude' / 'local' / 'claude'
+
 HOOKS_CONFIG = {
     "hooks": {
         "Notification": [{"matcher": "", "hooks": [{"type": "command", "command": str(HUBEST_DIR / "hooks" / "on-notification.sh"), "async": True, "timeout": 10}]}],
@@ -159,6 +161,83 @@ def project_name_from_cwd(cwd, projects):
             return p['name']
     return os.path.basename(cwd)
 
+def ensure_hubest_setup():
+    """Ensure ~/.hubest directories and hook scripts exist. Auto-init if needed."""
+    dirs = [HUBEST_DIR, STATE_DIR, HUBEST_DIR / 'hooks']
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Copy hook scripts from the repo's hooks/ dir (sibling to this script)
+    repo_hooks = Path(__file__).resolve().parent / 'hooks'
+    if repo_hooks.is_dir():
+        dest_hooks = HUBEST_DIR / 'hooks'
+        for src in repo_hooks.glob('*.sh'):
+            dest = dest_hooks / src.name
+            if not dest.exists() or src.stat().st_mtime > dest.stat().st_mtime:
+                shutil.copy2(src, dest)
+                os.chmod(dest, 0o755)
+
+
+def ai_route_message(message, projects):
+    """Use claude -p to determine which project(s) a message should be routed to.
+    Returns a list of matching project dicts, or empty list if no match / error."""
+    if not projects or not CLAUDE_CLI.exists():
+        return []
+
+    project_list = '\n'.join(
+        f'- name: "{p["name"]}", path: "{p.get("path","")}", keywords: {p.get("keywords",[])}'
+        for p in projects
+    )
+
+    prompt = f"""You are a message router. Given a user message and a list of projects, determine which project(s) the message should be sent to.
+
+Projects:
+{project_list}
+
+User message: "{message}"
+
+Rules:
+- Return ONLY a JSON array of project names that match. Example: ["project-a"]
+- If the message is relevant to multiple projects, return all matching names.
+- If you cannot determine the target, return [].
+- Do NOT include any explanation, only the JSON array."""
+
+    try:
+        env = os.environ.copy()
+        env.pop('CLAUDECODE', None)
+        result = subprocess.run(
+            [str(CLAUDE_CLI), '-p', prompt,
+             '--output-format', 'json',
+             '--model', 'haiku',
+             '--max-turns', '1',
+             '--no-session-persistence'],
+            capture_output=True, text=True, timeout=15, env=env,
+        )
+        if result.returncode != 0:
+            return []
+
+        # Parse the JSON output from claude -p --output-format json
+        outer = json.loads(result.stdout)
+        content = outer.get('result', '') if isinstance(outer, dict) else str(outer)
+
+        # Extract JSON array from the content
+        match = re.search(r'\[.*?\]', content, re.DOTALL)
+        if not match:
+            return []
+        names = json.loads(match.group())
+        if not names:
+            return []
+
+        matched = []
+        for n in names:
+            for p in projects:
+                if p['name'].lower() == n.lower() and p not in matched:
+                    matched.append(p)
+        return matched
+    except (subprocess.SubprocessError, json.JSONDecodeError, Exception):
+        return []
+
+
 def merge_hooks_into_settings(settings_path):
     settings_path = Path(settings_path)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,16 +314,19 @@ def iterm2_switch_tab(project_name):
         return False
 
 def iterm2_send_text(project_name, text):
-    """Send text to existing hubest:{project_name} session without switching tabs."""
+    """Send text to existing hubest:{project_name} session.
+    Text and Enter are sent as separate osascript calls to avoid
+    bracketed paste swallowing the newline in TUI apps like Claude Code."""
     target_title = f'hubest:{project_name}'
     escaped_text = text.replace('\\', '\\\\').replace('"', '\\"')
-    script = f'''
+    # Step 1: Send text without trailing newline
+    text_script = f'''
     tell application "iTerm2"
         repeat with w in windows
             repeat with t in tabs of w
                 tell current session of t
                     if name contains "{target_title}" then
-                        write text "{escaped_text}"
+                        write text "{escaped_text}" without newline
                         return "found"
                     end if
                 end tell
@@ -254,10 +336,34 @@ def iterm2_send_text(project_name, text):
     end tell
     '''
     try:
-        result = subprocess.run(['osascript', '-e', script], capture_output=True, timeout=5, text=True)
-        return result.stdout.strip() == 'found'
+        result = subprocess.run(['osascript', '-e', text_script], capture_output=True, timeout=5, text=True)
+        if result.stdout.strip() != 'found':
+            return False
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
+
+    # Step 2: Send Enter as a separate event
+    import time
+    time.sleep(0.2)
+    enter_script = f'''
+    tell application "iTerm2"
+        repeat with w in windows
+            repeat with t in tabs of w
+                tell current session of t
+                    if name contains "{target_title}" then
+                        write text ""
+                        return "ok"
+                    end if
+                end tell
+            end repeat
+        end repeat
+    end tell
+    '''
+    try:
+        subprocess.run(['osascript', '-e', enter_script], capture_output=True, timeout=5, text=True)
+    except subprocess.SubprocessError:
+        pass
+    return True
 
 def iterm2_create_tab(project_name, project_path):
     """Create a new tab and run Claude Code. Focus returns to original tab."""
@@ -566,79 +672,6 @@ class ProjectsSidebar(Static):
         ))
 
 
-class SessionsPanel(Static):
-    """Widget that displays session status in real-time."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.projects = load_projects()
-
-    def on_mount(self):
-        self.set_interval(2, self.refresh_display)
-        self.refresh_display()
-
-    def refresh_display(self):
-        self.projects = load_projects()
-        states = scan_state_dir()
-        result = []
-        for sid, state in states.items():
-            pname = project_name_from_cwd(state.get('cwd', ''), self.projects)
-            state['_project_name'] = pname
-            result.append(state)
-
-        order = {'waiting': 0, 'working': 1, 'idle': 2}
-        result.sort(key=lambda s: order.get(s.get('status', ''), 3))
-
-        table = Table(
-            show_header=False,
-            box=None,
-            padding=(0, 1),
-            expand=True,
-        )
-        table.add_column("", width=2, no_wrap=True)
-        table.add_column("Project", style="bold", width=16, no_wrap=True)
-        table.add_column("Message", ratio=1)
-
-        if result:
-            for s in result:
-                status = s.get('status', 'unknown')
-                ts = s.get('timestamp', '')
-                stale = is_stale(ts)
-
-                if stale:
-                    icon = '⏸'
-                elif status == 'working':
-                    icon = '●'
-                elif status == 'waiting':
-                    icon = '●'
-                elif status == 'idle':
-                    icon = '○'
-                else:
-                    icon = '✕'
-
-                if status == 'working':
-                    icon_style = "bold dodger_blue1"
-                elif status == 'waiting':
-                    icon_style = "bold yellow"
-                elif stale:
-                    icon_style = "dim"
-                else:
-                    icon_style = "dim white"
-
-                pname = s['_project_name']
-                msg = s.get('message', '')
-                if len(msg) > 60:
-                    msg = msg[:57] + '...'
-
-                table.add_row(
-                    Text(icon, style=icon_style),
-                    Text(pname),
-                    Text(msg, style="italic" if status == 'waiting' else ""),
-                )
-
-        self.update(table)
-
-
 class OutputLog(RichLog):
     """Area for displaying command output and notifications."""
     pass
@@ -686,12 +719,6 @@ class HubestApp(App):
     CSS = """
     Screen {
         background: $surface;
-    }
-
-    #sessions-panel {
-        height: auto;
-        max-height: 14;
-        margin: 0 1;
     }
 
     #output-log {
@@ -761,7 +788,6 @@ class HubestApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield ProjectsSidebar(id="sidebar")
-        yield SessionsPanel(id="sessions-panel")
         yield OutputLog(id="output-log", highlight=True, markup=True)
         yield SlashPopup(id="slash-popup")
         with Vertical(id="input-container"):
@@ -772,6 +798,7 @@ class HubestApp(App):
         yield Footer()
 
     def on_mount(self):
+        ensure_hubest_setup()
         self.set_interval(1, self._background_watcher)
         log = self.query_one("#output-log", OutputLog)
         log.write(Text("Welcome to Hubest!", style="bold bright_cyan"))
@@ -815,7 +842,7 @@ class HubestApp(App):
         sidebar = self.query_one("#sidebar", ProjectsSidebar)
         inp = self.query_one("#command-input")
         if sidebar.selected == "hub":
-            inp.placeholder = "Message all active projects..."
+            inp.placeholder = "Type a message (AI will route to the right project)..."
         else:
             inp.placeholder = f"Message {sidebar.selected}..."
 
@@ -824,16 +851,6 @@ class HubestApp(App):
         sidebar = self.query_one("#sidebar", ProjectsSidebar)
         if sidebar.selected != "hub":
             iterm2_switch_tab(sidebar.selected)
-
-    def _send_to_hub(self, message):
-        """Broadcast message to all registered projects (auto-creates sessions if needed)."""
-        if not self.projects:
-            self._log_text("No projects registered. Use /add <path> to register.", "yellow")
-            return
-
-        self._log_text(f"→ Broadcasting to {len(self.projects)} project(s)...", "bright_cyan")
-        for project in self.projects:
-            self._send_to_session(project, message)
 
     def _log(self, *args, **kwargs):
         """Write to OutputLog."""
@@ -844,7 +861,6 @@ class HubestApp(App):
 
     def _refresh_projects(self):
         self.projects = load_projects()
-        self.query_one("#sessions-panel", SessionsPanel).refresh_display()
         self.query_one("#sidebar", ProjectsSidebar).refresh_display()
 
     # --- Input Handling ---
@@ -923,8 +939,35 @@ class HubestApp(App):
             self._log_text(f"Project \"{sidebar.selected}\" not found.", "red")
             return
 
-        # Hub mode: broadcast to all registered projects
-        self._send_to_hub(message)
+        # Hub mode: use AI to route to matching project(s)
+        self._refresh_projects()
+        if not self.projects:
+            self._log_text("No projects registered. Use /add <path> to register.", "yellow")
+            return
+
+        self._log_text("🔍 Analyzing message to find target project(s)...", "dim")
+        self._ai_route_async(message)
+
+    @work(thread=True)
+    def _ai_route_async(self, message):
+        """Run AI routing in background thread to keep TUI responsive."""
+        projects = load_projects()
+        matched = ai_route_message(message, projects)
+
+        if not matched:
+            self.call_from_thread(
+                self._log_text,
+                "Could not determine target project. Use Ctrl+J/K to select a project first, or @project message.",
+                "yellow",
+            )
+            return
+
+        names = ', '.join(p['name'] for p in matched)
+        self.call_from_thread(
+            self._log_text, f"→ AI routed to: {names}", "bright_cyan"
+        )
+        for p in matched:
+            self.call_from_thread(self._send_to_session, p, message)
 
     def _show_selection(self, items, callback):
         """Enter number selection mode."""
@@ -970,29 +1013,40 @@ class HubestApp(App):
 
     @work(thread=True)
     def _retry_send_async(self, project_name, message):
-        """Wait for Claude Code SessionStart hook, then deliver message."""
+        """Wait for Claude Code to be ready, then deliver message."""
         import time
         projects = load_projects()
         project = find_project_by_name(project_name, projects)
         project_path = str(Path(project['path']).expanduser().resolve()) if project else None
 
-        # Wait for state file with matching cwd to appear (SessionStart hook)
+        # Strategy 1: Check state file from SessionStart hook (if hooks are installed)
+        # Strategy 2: Fall back to timed retry after initial wait for Claude Code startup
+        initial_wait = True
         for attempt in range(30):
             time.sleep(1)
+            # Check if SessionStart hook created a state file
             if project_path:
                 states = scan_state_dir()
                 for sid, state in states.items():
                     cwd = str(Path(state.get('cwd', '')).expanduser().resolve())
                     if cwd == project_path and state.get('status') in ('idle', 'waiting'):
-                        # Session is ready — send message
                         if iterm2_send_text(project_name, message):
                             self.call_from_thread(
                                 self._log_text, f"✓ Message delivered to {project_name}", "green"
                             )
                             return
+            # After 8 seconds, start trying to send directly (hooks may not be installed)
+            if attempt >= 7 and initial_wait:
+                initial_wait = False
+            if not initial_wait and attempt % 3 == 0:
+                if iterm2_send_text(project_name, message):
+                    self.call_from_thread(
+                        self._log_text, f"✓ Message delivered to {project_name}", "green"
+                    )
+                    return
 
         self.call_from_thread(
-            self._log_text, f"⚠ {project_name} — Failed to deliver message. Please send manually: {message}", "yellow"
+            self._log_text, f"⚠ {project_name} — Failed to deliver. Please send manually: {message}", "yellow"
         )
 
     def _get_states_with_projects(self):
@@ -1010,24 +1064,29 @@ class HubestApp(App):
 
     def _background_watcher(self):
         try:
+            from rich.rule import Rule
             current = scan_state_dir()
             for sid, state in current.items():
                 old = self.known_states.get(sid)
                 new_status = state.get('status', '')
                 old_status = old.get('status', '') if old else ''
+                new_ts = state.get('timestamp', '')
+                old_ts = old.get('timestamp', '') if old else ''
                 pname = project_name_from_cwd(state.get('cwd', ''), self.projects)
                 msg = state.get('message', '')
 
                 # New waiting state, or waiting message changed
                 if (new_status == 'waiting'
-                    and (old_status != 'waiting'
-                         or old.get('timestamp') != state.get('timestamp') if old else True)):
+                    and (old_status != 'waiting' or new_ts != old_ts)):
                     self._log(Text(f"⚡ [{pname}] Waiting for input: {msg or 'Waiting for input'}", style="bold yellow"))
                     self.bell()
 
-                # working → idle transition: task complete notification + show content
-                elif new_status == 'idle' and old_status == 'working':
-                    from rich.rule import Rule
+                # Task complete: idle with new/changed content
+                elif new_status == 'idle' and msg and (
+                    old_status == 'working'
+                    or old is None
+                    or new_ts != old_ts
+                ):
                     self._log(Rule(f" ✅ {pname} — Task complete ", style="green"))
                     if msg:
                         self._log(Text(msg))
@@ -1036,6 +1095,10 @@ class HubestApp(App):
                     self._log(Rule(style="green"))
                     self._log(Text(""))
                     self.bell()
+
+                # Status change notification (working started)
+                elif new_status == 'working' and old_status != 'working':
+                    self._log_text(f"⏳ [{pname}] Working...", "dodger_blue1")
 
             self.known_states = current
         except Exception:
@@ -1067,6 +1130,7 @@ class HubestApp(App):
 
     def slash_add(self, args=''):
         """Add a project by path. Name is auto-derived from directory basename."""
+        ensure_hubest_setup()
         if not args:
             self._log_text("Usage: /add <path> [--global]", "yellow")
             return
