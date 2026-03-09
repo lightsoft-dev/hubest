@@ -178,6 +178,27 @@ def ensure_hubest_setup():
                 shutil.copy2(src, dest)
                 os.chmod(dest, 0o755)
 
+    # Copy skill files to ~/.claude/skills/
+    repo_skills = Path(__file__).resolve().parent / 'skills'
+    if repo_skills.is_dir():
+        claude_skills = Path.home() / '.claude' / 'skills'
+        for skill_dir in repo_skills.iterdir():
+            if skill_dir.is_dir():
+                dest_skill = claude_skills / skill_dir.name
+                dest_skill.mkdir(parents=True, exist_ok=True)
+                for src in skill_dir.iterdir():
+                    if src.is_file():
+                        dest = dest_skill / src.name
+                        if not dest.exists() or src.stat().st_mtime > dest.stat().st_mtime:
+                            shutil.copy2(src, dest)
+
+    # Sync hubest_cli.py itself to ~/.hubest/ (skills reference it)
+    src_cli = Path(__file__).resolve()
+    dest_cli = HUBEST_DIR / 'hubest_cli.py'
+    if src_cli != dest_cli:
+        if not dest_cli.exists() or src_cli.stat().st_mtime > dest_cli.stat().st_mtime:
+            shutil.copy2(src_cli, dest_cli)
+
 
 def ai_route_message(message, projects):
     """Use claude -p to determine which project(s) a message should be routed to.
@@ -434,6 +455,18 @@ def cmd_init():
     if hubest_bin.exists():
         os.chmod(hubest_bin, 0o755)
         print(f'  ✅ {hubest_bin} (chmod +x)')
+    # Install skills to ~/.claude/skills/
+    repo_skills = Path(__file__).resolve().parent / 'skills'
+    if repo_skills.is_dir():
+        claude_skills = Path.home() / '.claude' / 'skills'
+        for skill_dir in repo_skills.iterdir():
+            if skill_dir.is_dir():
+                dest_skill = claude_skills / skill_dir.name
+                dest_skill.mkdir(parents=True, exist_ok=True)
+                for src in skill_dir.iterdir():
+                    if src.is_file():
+                        shutil.copy2(src, dest_skill / src.name)
+                print(f'  ✅ Skill installed: {dest_skill}')
     print()
     print('  Dependency Check')
     print('  ' + '─' * 40)
@@ -470,7 +503,10 @@ def cmd_init():
         print(f'  💡 Add to your PATH:')
         print(f'     export PATH="$HOME/.hubest/bin:$PATH"')
     print()
-    print('  Next step: Register a project with hubest add <name> <path>')
+    print('  Next steps:')
+    print('    hubest add <name> <path>  Register a project (name + path)')
+    print('    hubest register           Register current dir')
+    print('    /hubest-add               Register from any Claude Code session')
     print()
 
 def cmd_add_oneshot(args):
@@ -511,6 +547,62 @@ def _do_add_project(name, path, use_global=False):
         settings_path = Path(expanded_path) / '.claude' / 'settings.json'
         merge_hooks_into_settings(settings_path)
         print(f'  ✅ Project hooks injected: {settings_path}')
+
+
+def cmd_register(args=''):
+    """Register a project by path (defaults to cwd). Standalone, no TUI dependency."""
+    ensure_hubest_setup()
+    parts = args.split() if args else []
+    use_global = '--global' in parts
+    parts = [p for p in parts if p != '--global']
+
+    path = parts[0] if parts else os.getcwd()
+    expanded_path = str(Path(path).expanduser().resolve())
+    if not os.path.isdir(expanded_path):
+        print(f'Error: Directory does not exist: {expanded_path}')
+        sys.exit(1)
+
+    projects = load_projects()
+
+    # Check if already registered by path
+    for p in projects:
+        existing_path = str(Path(p.get('path', '')).expanduser().resolve())
+        if existing_path == expanded_path:
+            print(f'Already registered: {p["name"]} -> {expanded_path}')
+            print(f'Keywords: {p.get("keywords", [])}')
+            return
+
+    # Auto-derive name from basename
+    name = os.path.basename(expanded_path)
+
+    # If name already exists, use parent/basename format
+    existing_names = {p['name'] for p in projects}
+    if name in existing_names:
+        parent = os.path.basename(os.path.dirname(expanded_path))
+        name = f"{parent}/{name}" if parent else name
+        if name in existing_names:
+            print(f'Error: Project name "{name}" is already taken.')
+            sys.exit(1)
+
+    keywords = [name]
+    basename = os.path.basename(expanded_path)
+    if basename != name and basename not in keywords:
+        keywords.append(basename)
+    if '-' in name:
+        keywords.extend(name.split('-'))
+
+    project = {'name': name, 'path': expanded_path, 'keywords': keywords}
+    projects.append(project)
+    save_projects(projects)
+    print(f'Project registered: {name} -> {expanded_path}')
+    print(f'Keywords: {", ".join(keywords)}')
+
+    if use_global:
+        settings_path = Path.home() / '.claude' / 'settings.json'
+    else:
+        settings_path = Path(expanded_path) / '.claude' / 'settings.json'
+    merge_hooks_into_settings(settings_path)
+    print(f'Hooks injected: {settings_path}')
 
 
 # --- Textual TUI ---
@@ -1568,6 +1660,9 @@ def main():
     elif command == 'add':
         args = ' '.join(sys.argv[2:])
         cmd_add_oneshot(args)
+    elif command == 'register':
+        args = ' '.join(sys.argv[2:])
+        cmd_register(args)
     elif command == 'help':
         print()
         print('  Hubest — Claude Code Multi-Session Manager')
@@ -1575,7 +1670,8 @@ def main():
         print('  Usage:')
         print('    hubest              Launch TUI')
         print('    hubest init         Initial setup')
-        print('    hubest add <n> <p>  Register a project')
+        print('    hubest add <n> <p>  Register a project (name + path)')
+        print('    hubest register [p] Register current dir (or path)')
         print('    hubest --version    Show version')
         print('    hubest --help       Show this help')
         print()

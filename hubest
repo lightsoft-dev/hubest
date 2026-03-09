@@ -13,6 +13,11 @@ case "${1:-}" in
     python3 "$HUBEST_DIR/hubest_cli.py" add "$@"
     exit $?
     ;;
+  register)
+    shift
+    python3 "$HUBEST_DIR/hubest_cli.py" register "$@"
+    exit $?
+    ;;
   --help|-h|help)
     python3 "$HUBEST_DIR/hubest_cli.py" help
     exit 0
