@@ -5,7 +5,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 CWD=$(echo "$INPUT" | jq -r '.cwd')
 
 # Use the last_assistant_message provided directly by Claude Code
-SUMMARY=$(echo "$INPUT" | jq -r '.last_assistant_message // ""' | head -c 500)
+SUMMARY=$(echo "$INPUT" | jq -r '.last_assistant_message // ""')
 
 # If empty, keep existing message
 if [ -z "$SUMMARY" ]; then

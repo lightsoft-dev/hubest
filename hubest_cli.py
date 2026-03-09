@@ -23,6 +23,7 @@ COMMAND_ALIASES = {
     's': 'status', 'p': 'pending', 'sw': 'switch',
     'd': 'dash', 'pr': 'projects', 'h': 'help',
     '?': 'help', 'q': 'exit', 'quit': 'exit', 'cls': 'clear',
+    'l': 'last',
 }
 
 SLASH_COMMANDS = {
@@ -784,6 +785,7 @@ class HubestApp(App):
         self._pending_selection = None  # (options_list, callback, message)
         self._command_history = []
         self._history_idx = -1
+        self._last_responses = {}  # project_name → full response text
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1087,11 +1089,14 @@ class HubestApp(App):
                     or old is None
                     or new_ts != old_ts
                 ):
+                    self._last_responses[pname] = msg
+                    lines = msg.split('\n')
+                    preview = '\n'.join(lines[:5])
+                    truncated = len(lines) > 5
                     self._log(Rule(f" ✅ {pname} — Task complete ", style="green"))
-                    if msg:
-                        self._log(Text(msg))
-                    else:
-                        self._log(Text("(no content)", style="dim"))
+                    self._log(Text(preview))
+                    if truncated:
+                        self._log(Text(f"  ... ({len(lines) - 5} more lines — type 'last {pname}' to see full)", style="dim"))
                     self._log(Rule(style="green"))
                     self._log(Text(""))
                     self.bell()
@@ -1454,6 +1459,39 @@ class HubestApp(App):
     def cmd_layout(self, args=''):
         self._log_text("Layout feature is not yet implemented.", "dim")
 
+    def cmd_last(self, args=''):
+        """Show the full last response from a project."""
+        if args:
+            name = args.strip()
+            # Try exact match first, then partial
+            msg = self._last_responses.get(name)
+            if not msg:
+                for pname, resp in self._last_responses.items():
+                    if name.lower() in pname.lower():
+                        msg = resp
+                        name = pname
+                        break
+            if msg:
+                from rich.rule import Rule
+                from rich.markdown import Markdown
+                self._log(Rule(f" {name} — Full Response ", style="bright_cyan"))
+                self._log(Markdown(msg))
+                self._log(Rule(style="bright_cyan"))
+            else:
+                self._log_text(f"No response stored for \"{args.strip()}\".", "yellow")
+        else:
+            if not self._last_responses:
+                self._log_text("No responses yet.", "dim")
+                return
+            # Show most recent response
+            name = list(self._last_responses.keys())[-1]
+            msg = self._last_responses[name]
+            from rich.rule import Rule
+            from rich.markdown import Markdown
+            self._log(Rule(f" {name} — Full Response ", style="bright_cyan"))
+            self._log(Markdown(msg))
+            self._log(Rule(style="bright_cyan"))
+
     def cmd_logs(self, args=''):
         self._log_text("Logs feature is not yet implemented.", "dim")
 
@@ -1473,6 +1511,7 @@ class HubestApp(App):
             ("dash",     "d",  "Refresh session status"),
             ("projects", "pr", "List registered projects"),
             ("add",      "",   "Register a project"),
+            ("last",     "l",  "Show full last response"),
             ("clear",    "cls","Clear output (Ctrl+L)"),
             ("help",     "?,h","Show this help"),
             ("exit",     "q",  "Exit (Ctrl+C)"),
